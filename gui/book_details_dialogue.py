@@ -19,12 +19,13 @@ class ImageWorker(QThread):
                 self.image_finished.emit(data)
 
 class BookDetailsDialog(QDialog):
-    def __init__(self, b_id, fetch_func, update_func, cover_func):
+    def __init__(self, b_id, fetch_func, update_func, cover_func, delete_func):
         super().__init__()
         self.b_id = b_id
         self.update_func = update_func
         self.cover_func = cover_func
         self.image_worker = None
+        self.delete_func = delete_func
         
         # Fetch the deep data immediately
         self.book_data = fetch_func(self.b_id)
@@ -78,8 +79,22 @@ class BookDetailsDialog(QDialog):
         controls_layout.addStretch()
         
         # Save Button
+        button_layout = QHBoxLayout()
+        
+        self.delete_btn = QPushButton("Delete Book")
+        # Give it a red warning color to prevent accidental clicks
+        self.delete_btn.setStyleSheet("background-color: #ef4444; color: white; font-weight: bold;")
+        self.delete_btn.clicked.connect(self.trigger_delete)
+        
         save_btn = QPushButton("Save Changes")
         save_btn.clicked.connect(self.save_changes)
+        
+        button_layout.addWidget(self.delete_btn)
+        button_layout.addStretch()
+        button_layout.addWidget(save_btn)
+        
+        right_layout.addLayout(button_layout) # Add the row of buttons
+        main_layout.addLayout(right_layout)
         
         right_layout.addWidget(title_lbl)
         right_layout.addWidget(author_lbl)
@@ -130,3 +145,21 @@ class BookDetailsDialog(QDialog):
         # Triggered when the user presses the 'Escape' key
         self.cleanup_thread()
         super().reject()
+    
+    def trigger_delete(self):
+        # 1. Ask for confirmation
+        reply = QMessageBox.question(
+            self, 'Confirm Delete', 
+            f"Are you absolutely sure you want to remove '{self.book_data['title']}' from your library?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
+            QMessageBox.StandardButton.No
+        )
+        
+        # 2. Execute deletion if confirmed
+        if reply == QMessageBox.StandardButton.Yes:
+            success = self.delete_func(self.b_id)
+            if success:
+                QMessageBox.information(self, "Deleted", "Book removed successfully.")
+                self.accept() # Triggers the grid refresh in main.py
+            else:
+                QMessageBox.warning(self, "Error", "Failed to delete the book.")

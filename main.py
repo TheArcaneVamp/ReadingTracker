@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QApplication
 from gui.main_window import MainWindow
 from gui.search_dialog import SearchDialog
 
-from db.controller import fetch_all_books, insert_book, fetch_book_details, update_book_status, fetch_filtered_books
+from db.controller import fetch_all_books, insert_book, fetch_book_details, update_book_status, fetch_filtered_books, delete_book
 from db.create_db import create_db
 from api.api_connector import get_book, get_cover
 from gui.book_details_dialogue import BookDetailsDialog
@@ -56,6 +56,19 @@ class ReadingTrackerApp(MainWindow):
         # Pass all 5 parameters to the DB function
         books = fetch_filtered_books(search_text, status, author, year, rating)
         self.populate_library(books, get_cover)
+        
+    def open_book_details(self, book_data):
+        dialog = BookDetailsDialog(
+            b_id=book_data['b_id'],
+            fetch_func=fetch_book_details,
+            update_func=update_book_status,
+            delete_func=delete_book, # Pass it here
+            cover_func=get_cover
+        )
+        
+        # Because we tied self.accept() to successful deletion, this still handles the UI refresh perfectly.
+        if dialog.exec(): 
+            self.refresh_library()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

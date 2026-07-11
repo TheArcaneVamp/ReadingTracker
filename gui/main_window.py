@@ -96,6 +96,10 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         
         self.setup_ui()
+        self.apply_modern_styling()
+        
+        self.all_cards = []
+        self.current_columns = 0
         
     def setup_ui(self):
         # 1. The Central Container
@@ -178,25 +182,106 @@ class MainWindow(QMainWindow):
                 
                 # If the widget is a book card with an active download thread, kill the thread
                 if hasattr(widget, 'image_worker') and widget.image_worker and widget.image_worker.isRunning():
-                    widget.image_worker.terminate() # Forcefully stop the download
-                    widget.image_worker.wait()      # Wait for the thread to safely close
+                    widget.image_worker.terminate() 
+                    widget.image_worker.wait()      
                     
                 widget.deleteLater()
+                
+        self.all_cards.clear()     
+        self.current_columns = 0
 
     def populate_library(self, books_data, cover_func):
         self.clear_grid()
         
-        max_columns = 5 # Adjust this to change how many books fit on one row
-        
-        for index, book in enumerate(books_data):
-            row = index // max_columns
-            col = index % max_columns
-            
+        for book in books_data:
             card = LibraryBookCard(book, cover_func)
-            card.card_clicked.connect(self.open_book_details) 
-            self.grid_layout.addWidget(card, row, col)
+            card.card_clicked.connect(self.open_book_details)
+            self.all_cards.append(card)
+            
+        # 2. Draw them on the grid based on the current window size
+        self.re_layout_grid()
          
     def open_book_details(self, book_data):
         # We will build the actual Book Details dialog here next.
         print(f"User clicked on: {book_data['title']} (ID: {book_data['b_id']})")   
+    
+    def re_layout_grid(self):
+        if not self.all_cards: return
+        
+        # Calculate how many cards fit based on the scroll area's current width
+        available_width = self.scroll_area.viewport().width()
+        card_width = 170 # 150px card width + 20px padding/spacing
+        columns = max(1, available_width // card_width)
+        
+        # Prevent unnecessary layout recalculations if the column count hasn't changed
+        if columns == self.current_columns: return
+        self.current_columns = columns
+        
+        # Remove widgets from the grid layout (but DO NOT delete them from memory)
+        for i in reversed(range(self.grid_layout.count())):
+            self.grid_layout.takeAt(i)
             
+        # Re-insert the existing cards at their new responsive coordinates
+        for index, card in enumerate(self.all_cards):
+            row = index // columns
+            col = index % columns
+            self.grid_layout.addWidget(card, row, col)
+            
+    def resizeEvent(self, event):
+        # Let the standard PyQt window resize happen first
+        super().resizeEvent(event)
+        # Then forcefully shuffle our book cards to fit the new width
+        self.re_layout_grid()
+            
+    def apply_modern_styling(self):
+        self.setStyleSheet("""
+            /* 1. Main Background */
+            QMainWindow, QWidget {
+                background-color: #f3f4f6;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+
+            /* 2. Scroll Area (Remove the ugly indented border) */
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollArea > QWidget > QWidget {
+                background-color: transparent;
+            }
+
+            /* 3. Inputs & Dropdowns */
+            QLineEdit, QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 13px;
+                color: #374151;
+            }
+            
+            /* Highlight the border blue when the user clicks inside */
+            QLineEdit:focus, QComboBox:focus {
+                border: 2px solid #3b82f6;
+                padding: 5px 11px; /* Adjust padding to offset the thicker border */
+            }
+
+            /* 4. Modern Mac-Style Scrollbar */
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 10px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #d1d5db;
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #9ca3af;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px; /* Completely hides the clunky top/bottom arrows */
+            }
+        """)

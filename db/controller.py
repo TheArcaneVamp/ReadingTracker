@@ -159,3 +159,20 @@ def fetch_filtered_books(search_text="", status="All", author="", year="", ratin
     finally:
         if 'con' in locals() and con:
             con.close()
+            
+def delete_book(b_id):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # CRITICAL: Forces SQLite to respect ON DELETE CASCADE
+        cursor.execute("PRAGMA foreign_keys = ON;") 
+        
+        cursor.execute("DELETE FROM Books WHERE b_id = ?", (b_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Delete error: {e}")
+        return False
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
