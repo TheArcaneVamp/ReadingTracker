@@ -8,15 +8,16 @@ def create_db():
         """
             CREATE TABLE IF NOT EXISTS Books
             (
-	            b_id TEXT PRIMARY KEY,
-	            title TEXT NOT NULL,
-	            year_published DATE,
-	            status TEXT CHECK (status IN ('Finished', 'TBR', 'DNF', 'CR')),
-	            cover_url TEXT,
-	            description TEXT,
-	            start_date DATE,
-	            finish_date DATE
-            );
+            	b_id TEXT PRIMARY KEY,
+            	title TEXT NOT NULL,
+            	year_published DATE,
+            	status TEXT CHECK (status IN ('Finished', 'TBR', 'DNF', 'CR')),
+            	rating INTEGER CHECK (rating >= 1 AND rating <= 10),
+            	cover_url TEXT,
+            	description TEXT,
+            	start_date DATE,
+            	finish_date DATE
+            );          
         """,
         """
             CREATE TABLE IF NOT EXISTS Authors
