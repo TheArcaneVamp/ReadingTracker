@@ -1,6 +1,6 @@
 # Reading Tracker
 
-![Main Library View](assets/main_library.jpg)
+![Main Library View](assets/main_library.png)
 
 A lightweight, responsive desktop application built with Python and PyQt6 for managing a personal library. It integrates with the Open Library API to automatically fetch book metadata and covers, storing them in a local relational SQLite database.
 
