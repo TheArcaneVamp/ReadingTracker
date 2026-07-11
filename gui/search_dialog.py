@@ -3,35 +3,104 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QWidget, QScrollArea, QMessageBox
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from api.api_connector import get_book  
+from PyQt6.QtGui import QPixmap
 
-# --- 1. The Background Worker ---
+# --- 1. The Background Workers ---
 class SearchWorker(QThread):
-    # This signal will broadcast the list of dictionaries back to the GUI
     search_finished = pyqtSignal(list)
     
-    def __init__(self, query):
+    def __init__(self, query, search_func):
         super().__init__()
         self.query = query
+        self.search_func = search_func 
         
     def run(self):
-        # This runs entirely in the background
-        results = get_book(self.query)
+        results = self.search_func(self.query) 
         self.search_finished.emit(results)
-
-# --- 2. The Search Dialog ---
-class SearchDialog(QDialog):
-    def __init__(self, db_controller=None):
+        
+class ImageWorker(QThread):
+    image_finished = pyqtSignal(bytes)
+    
+    def __init__(self, url, cover_func):
         super().__init__()
-        self.db_controller = db_controller # We will pass the DB logic here later
+        self.url = url
+        self.cover_func = cover_func
+        
+    def run(self):
+        if self.url:
+            data = self.cover_func(self.url)
+            if data:
+                self.image_finished.emit(data)
+
+# --- 2. The Custom Result Card Widget ---
+class ResultCard(QWidget):
+    def __init__(self, book_data, add_callback, cover_func):
+        super().__init__()
+        self.book_data = book_data
+        self.add_callback = add_callback
+        self.cover_func = cover_func # Store it here
+        self.image_worker = None
+        
+        self.setup_ui()
+        self.load_thumbnail()
+
+    def setup_ui(self):
+        layout = QHBoxLayout(self)
+        
+        # 1. Thumbnail Container (Fixed Size)
+        self.cover_label = QLabel("Loading...")
+        self.cover_label.setFixedSize(60, 90)
+        self.cover_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; font-size: 10px;")
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.setScaledContents(True) # Stretches image to fit label perfectly
+        
+        # 2. Text Info
+        info_text = f"<b>{self.book_data['title']}</b><br>By: {self.book_data['author']}<br>Year: {self.book_data['year_published']}"
+        info_label = QLabel(info_text)
+        info_label.setTextFormat(Qt.TextFormat.RichText)
+        
+        # 3. Add Button
+        add_btn = QPushButton("Add to Library")
+        add_btn.setFixedSize(100, 30)
+        add_btn.clicked.connect(lambda: self.add_callback(self.book_data))
+        
+        layout.addWidget(self.cover_label)
+        layout.addWidget(info_label)
+        layout.addStretch()
+        layout.addWidget(add_btn)
+
+    def load_thumbnail(self):
+        url = self.book_data.get("cover_url")
+        if not url:
+            self.cover_label.setText("No Cover")
+            return
+            
+        # Pass the stored cover_func into the worker
+        self.image_worker = ImageWorker(url, self.cover_func) 
+        self.image_worker.image_finished.connect(self.set_image)
+        self.image_worker.start()
+
+    def set_image(self, image_bytes):
+        pixmap = QPixmap()
+        pixmap.loadFromData(image_bytes)
+        self.cover_label.setPixmap(pixmap)
+
+# --- 3. The Search Dialog ---
+class SearchDialog(QDialog):
+    def __init__(self, search_func, cover_func, insert_func):
+        super().__init__()
+        self.search_func = search_func
+        self.cover_func = cover_func
+        self.insert_func = insert_func
+        
         self.setWindowTitle("Search Open Library")
         self.resize(600, 500)
         self.setup_ui()
+    
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
-        # Top Search Bar
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Enter book title...")
@@ -41,12 +110,10 @@ class SearchDialog(QDialog):
         search_layout.addWidget(self.search_btn)
         layout.addLayout(search_layout)
         
-        # Status Label (to show "Searching...")
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
         
-        # Scroll Area for Results
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.results_container = QWidget()
@@ -56,21 +123,19 @@ class SearchDialog(QDialog):
         
         layout.addWidget(self.scroll_area)
         
-        # Connect the search button
         self.search_btn.clicked.connect(self.perform_search)
         self.search_input.returnPressed.connect(self.perform_search)
 
     def perform_search(self):
         query = self.search_input.text().strip()
-        if not query:
-            return
+        if not query: return
             
         self.search_btn.setEnabled(False)
         self.status_label.setText("Searching Open Library...")
         self.clear_results()
         
-        # Spin up the background thread
-        self.worker = SearchWorker(query)
+        # Pass the injected search_func here
+        self.worker = SearchWorker(query, self.search_func) 
         self.worker.search_finished.connect(self.display_results)
         self.worker.start()
 
@@ -81,42 +146,24 @@ class SearchDialog(QDialog):
             self.status_label.setText("No books found.")
             return
             
-        self.status_label.setText(f"Found top {len(books)} results:")
+        self.status_label.setText(f"Found {len(books)} results:")
         
         for item in books:
             book_data = item['book_entry']
-            card = self.create_result_card(book_data)
+            # Pass the cover_func down to the ResultCard
+            card = ResultCard(book_data, self.add_book_to_db, self.cover_func) 
             self.results_layout.addWidget(card)
 
-    def create_result_card(self, book_data):
-        # A miniature layout for each individual book result
-        card_widget = QWidget()
-        card_layout = QHBoxLayout(card_widget)
-        
-        # Basic text info (Title, Author, Year)
-        info_text = f"<b>{book_data['title']}</b><br>By: {book_data['author']}<br>Year: {book_data['year_published']}"
-        info_label = QLabel(info_text)
-        info_label.setTextFormat(Qt.TextFormat.RichText)
-        
-        # Add button
-        add_btn = QPushButton("Add to Library")
-        add_btn.setFixedSize(100, 30)
-        # Use a lambda to capture the specific book_data for this button
-        add_btn.clicked.connect(lambda checked, b=book_data: self.add_book_to_db(b))
-        
-        card_layout.addWidget(info_label)
-        card_layout.addStretch()
-        card_layout.addWidget(add_btn)
-        
-        return card_widget
-
     def add_book_to_db(self, book_data):
-        print(f"Ready to insert: {book_data['title']} into the database.")
-        # We will connect your db.controller.insert_book() function here next.
-        QMessageBox.information(self, "Success", f"'{book_data['title']}' selected!")
+        # Execute the injected database function
+        success, message = self.insert_func(book_data)
+        
+        if success:
+            QMessageBox.information(self, "Success", message)
+        else:
+            QMessageBox.warning(self, "Notice", message)
 
     def clear_results(self):
-        # Safely remove old results before showing new ones
         while self.results_layout.count():
             child = self.results_layout.takeAt(0)
             if child.widget():

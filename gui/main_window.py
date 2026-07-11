@@ -1,8 +1,93 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QScrollArea, QGridLayout, QLabel
+    QPushButton, QScrollArea, QGridLayout, QLabel, QLineEdit, QComboBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QPixmap, QMouseEvent
+
+class ImageWorker(QThread):
+    image_finished = pyqtSignal(bytes)
+    
+    def __init__(self, url, cover_func):
+        super().__init__()
+        self.url = url
+        self.cover_func = cover_func
+        
+    def run(self):
+        if self.url:
+            data = self.cover_func(self.url)
+            if data:
+                self.image_finished.emit(data)
+                
+class LibraryBookCard(QWidget):
+    # This signal broadcasts the book's data when the card is clicked
+    card_clicked = pyqtSignal(dict) 
+
+    def __init__(self, book_data, cover_func):
+        super().__init__()
+        self.book_data = book_data
+        self.cover_func = cover_func
+        self.image_worker = None
+        
+        self.setup_ui()
+        self.load_cover()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10) # Internal padding
+        
+        # Bug 3 Fix: Make it look like a physical card
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            LibraryBookCard {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 8px;
+            }
+            LibraryBookCard:hover {
+                background-color: #f5f5f5;
+                border: 1px solid #909090;
+            }
+        """)
+        self.setFixedSize(150, 240) 
+        self.setCursor(Qt.CursorShape.PointingHandCursor) # Changes mouse to a hand on hover
+        
+        # Cover Image
+        self.cover_label = QLabel("Loading...")
+        self.cover_label.setFixedSize(110, 160)
+        self.cover_label.setStyleSheet("background-color: #e0e0e0; border: none;")
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.setScaledContents(True)
+        
+        # Bug 1 Fix: Strict text sizing
+        self.title_label = QLabel(self.book_data['title'])
+        self.title_label.setWordWrap(True)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setFixedHeight(40) # Forces text to stop expanding
+        self.title_label.setStyleSheet("border: none; background: transparent; font-size: 11px;")
+        
+        layout.addWidget(self.cover_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.title_label)
+
+    # Bug 4 Fix: Catch the mouse click and emit the signal
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.card_clicked.emit(self.book_data)
+
+    def load_cover(self):
+        url = self.book_data.get("cover_url")
+        if not url:
+            self.cover_label.setText("No Cover")
+            return
+            
+        self.image_worker = ImageWorker(url, self.cover_func)
+        self.image_worker.image_finished.connect(self.set_image)
+        self.image_worker.start()
+
+    def set_image(self, image_bytes):
+        pixmap = QPixmap()
+        pixmap.loadFromData(image_bytes)
+        self.cover_label.setPixmap(pixmap)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -33,6 +118,38 @@ class MainWindow(QMainWindow):
         
         main_layout.addLayout(top_bar_layout)
         
+        filter_layout = QHBoxLayout()
+        
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Title...")
+        
+        self.author_search = QLineEdit()
+        self.author_search.setPlaceholderText("Author...")
+        
+        self.year_search = QLineEdit()
+        self.year_search.setPlaceholderText("Year...")
+        self.year_search.setFixedWidth(60)
+        
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["All", "TBR", "CR", "Finished", "DNF"])
+        
+        self.rating_filter = QComboBox()
+        self.rating_filter.addItems(["All", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+        
+        filter_layout.addWidget(QLabel("Title:"))
+        filter_layout.addWidget(self.search_bar)
+        filter_layout.addWidget(QLabel("Author:"))
+        filter_layout.addWidget(self.author_search)
+        filter_layout.addWidget(QLabel("Year:"))
+        filter_layout.addWidget(self.year_search)
+        filter_layout.addWidget(QLabel("Status:"))
+        filter_layout.addWidget(self.status_filter)
+        filter_layout.addWidget(QLabel("Rating:"))
+        filter_layout.addWidget(self.rating_filter)
+        filter_layout.addStretch()
+        
+        main_layout.addLayout(filter_layout)
+        
         # 3. The Scrollable Library Grid
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True) # Allows grid to expand
@@ -51,8 +168,35 @@ class MainWindow(QMainWindow):
     def open_search_dialog(self):
         print("Search dialog will open here.")
         # We will instantiate your SearchDialog class here in the next step
+        
+    def clear_grid(self):
+        # Destroys all existing widgets in the layout so we start fresh
+        while self.grid_layout.count():
+            child = self.grid_layout.takeAt(0)
+            if child.widget():
+                widget = child.widget()
+                
+                # If the widget is a book card with an active download thread, kill the thread
+                if hasattr(widget, 'image_worker') and widget.image_worker and widget.image_worker.isRunning():
+                    widget.image_worker.terminate() # Forcefully stop the download
+                    widget.image_worker.wait()      # Wait for the thread to safely close
+                    
+                widget.deleteLater()
 
-    def populate_library(self):
-        # This is where we will query the DB and loop through the results 
-        # to draw the book covers on the grid_layout
-        pass
+    def populate_library(self, books_data, cover_func):
+        self.clear_grid()
+        
+        max_columns = 5 # Adjust this to change how many books fit on one row
+        
+        for index, book in enumerate(books_data):
+            row = index // max_columns
+            col = index % max_columns
+            
+            card = LibraryBookCard(book, cover_func)
+            card.card_clicked.connect(self.open_book_details) 
+            self.grid_layout.addWidget(card, row, col)
+         
+    def open_book_details(self, book_data):
+        # We will build the actual Book Details dialog here next.
+        print(f"User clicked on: {book_data['title']} (ID: {book_data['b_id']})")   
+            
